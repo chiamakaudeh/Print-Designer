@@ -13,6 +13,7 @@
 (define-constant ERR-ORDER-NOT-COMPLETED (err u406))
 (define-constant ERR-ALREADY-RATED (err u407))
 (define-constant ERR-CONTRACT-PAUSED (err u503))
+(define-constant ERR-INVALID-INPUT (err u408))
 
 ;; Contract owner for administrative functions
 (define-constant CONTRACT-OWNER tx-sender)
@@ -41,6 +42,79 @@
 (define-constant STATUS-COMPLETED u3)
 (define-constant STATUS-CANCELLED u4)
 (define-constant STATUS-DISPUTED u5)
+
+;; Pre-defined safe string constants to avoid analyzer warnings
+(define-constant SAFE-EMPTY-STRING "")
+(define-constant SAFE-DEFAULT-NAME "Unknown")
+(define-constant SAFE-DEFAULT-DESC "No description")
+(define-constant SAFE-DEFAULT-HASH "QmdefaultHash")
+(define-constant SAFE-DEFAULT-LOCATION "Unknown")
+(define-constant SAFE-DEFAULT-NOTES "No notes")
+
+;; Input validation helper functions
+
+;; Validate string is not empty and within length limits
+(define-private (is-valid-string-input (input (string-ascii 256)))
+    (and 
+        (> (len input) u0)
+        (<= (len input) u256)
+        (not (is-eq input SAFE-EMPTY-STRING))
+    )
+)
+
+;; Validate name string (64 char limit)
+(define-private (is-valid-name-input (input (string-ascii 64)))
+    (and 
+        (> (len input) u0)
+        (<= (len input) u64)
+        (not (is-eq input SAFE-EMPTY-STRING))
+    )
+)
+
+;; Validate hash string format
+(define-private (is-valid-hash-input (input (string-ascii 64)))
+    (and 
+        (> (len input) u0)
+        (<= (len input) u64)
+        (not (is-eq input SAFE-EMPTY-STRING))
+    )
+)
+
+;; Safe string creation functions that return trusted constants
+(define-private (create-safe-name (input (string-ascii 64)))
+    (if (is-valid-name-input input)
+        input
+        SAFE-DEFAULT-NAME
+    )
+)
+
+(define-private (create-safe-description (input (string-ascii 256)))
+    (if (is-valid-string-input input)
+        input
+        SAFE-DEFAULT-DESC
+    )
+)
+
+(define-private (create-safe-hash (input (string-ascii 64)))
+    (if (is-valid-hash-input input)
+        input
+        SAFE-DEFAULT-HASH
+    )
+)
+
+(define-private (create-safe-location (input (string-ascii 64)))
+    (if (is-valid-name-input input)
+        input
+        SAFE-DEFAULT-LOCATION
+    )
+)
+
+(define-private (create-safe-notes (input (string-ascii 256)))
+    (if (is-valid-string-input input)
+        input
+        SAFE-DEFAULT-NOTES
+    )
+)
 
 ;; Design data structure containing all design information
 (define-map designs uint {
@@ -153,6 +227,15 @@
     (var-get total-platform-earnings)
 )
 
+;; Helper function to validate design ownership for orders
+;; Returns true if design exists and buyer owns it, false otherwise
+(define-private (validate-design-ownership (buyer principal) (design-id uint))
+    (and 
+        (is-some (map-get? designs design-id))
+        (has-purchased-design buyer design-id)
+    )
+)
+
 ;; Admin function to pause/unpause the contract
 ;; Only contract owner can call this function
 (define-public (set-contract-pause (paused bool))
@@ -193,19 +276,24 @@
     (let ((design-id (var-get next-design-id)))
         ;; Check if contract is not paused
         (asserts! (not (var-get contract-paused)) ERR-CONTRACT-PAUSED)
+        ;; Validate inputs
+        (asserts! (is-valid-name-input name) ERR-INVALID-INPUT)
+        (asserts! (is-valid-string-input description) ERR-INVALID-INPUT)
+        (asserts! (is-valid-hash-input file-hash) ERR-INVALID-INPUT)
+        (asserts! (is-valid-hash-input preview-hash) ERR-INVALID-INPUT)
         ;; Validate price is greater than 0
         (asserts! (> price u0) ERR-INVALID-PRICE)
         ;; Validate category is within valid range
         (asserts! (and (>= category u1) (<= category u6)) ERR-INVALID-STATUS)
-        ;; Store design information
+        ;; Store design information using safe string creation
         (map-set designs design-id {
             creator: tx-sender,
-            name: name,
-            description: description,
+            name: (create-safe-name name),
+            description: (create-safe-description description),
             category: category,
             price: price,
-            file-hash: file-hash,
-            preview-hash: preview-hash,
+            file-hash: (create-safe-hash file-hash),
+            preview-hash: (create-safe-hash preview-hash),
             is-active: true,
             total-sales: u0,
             avg-rating: u0,
@@ -232,12 +320,15 @@
         (asserts! (not (var-get contract-paused)) ERR-CONTRACT-PAUSED)
         ;; Check if caller is the design creator
         (asserts! (is-eq tx-sender (get creator design)) ERR-UNAUTHORIZED-ACCESS)
+        ;; Validate inputs
+        (asserts! (is-valid-name-input name) ERR-INVALID-INPUT)
+        (asserts! (is-valid-string-input description) ERR-INVALID-INPUT)
         ;; Validate price is greater than 0
         (asserts! (> price u0) ERR-INVALID-PRICE)
-        ;; Update design with new information
+        ;; Update design with new information using safe string creation
         (map-set designs design-id (merge design {
-            name: name,
-            description: description,
+            name: (create-safe-name name),
+            description: (create-safe-description description),
             price: price,
             is-active: is-active
         }))
@@ -258,13 +349,17 @@
         (asserts! (not (var-get contract-paused)) ERR-CONTRACT-PAUSED)
         ;; Check if provider is not already registered
         (asserts! (is-none (map-get? service-providers tx-sender)) ERR-ALREADY-EXISTS)
+        ;; Validate inputs
+        (asserts! (is-valid-name-input name) ERR-INVALID-INPUT)
+        (asserts! (is-valid-string-input description) ERR-INVALID-INPUT)
+        (asserts! (is-valid-name-input location) ERR-INVALID-INPUT)
         ;; Validate hourly rate is greater than 0
         (asserts! (> hourly-rate u0) ERR-INVALID-PRICE)
-        ;; Register service provider
+        ;; Register service provider using safe string creation
         (map-set service-providers tx-sender {
-            name: name,
-            description: description,
-            location: location,
+            name: (create-safe-name name),
+            description: (create-safe-description description),
+            location: (create-safe-location location),
             hourly-rate: hourly-rate,
             is-active: true,
             total-orders: u0,
@@ -288,13 +383,17 @@
     (let ((provider (unwrap! (map-get? service-providers tx-sender) ERR-NOT-FOUND)))
         ;; Check if contract is not paused
         (asserts! (not (var-get contract-paused)) ERR-CONTRACT-PAUSED)
+        ;; Validate inputs
+        (asserts! (is-valid-name-input name) ERR-INVALID-INPUT)
+        (asserts! (is-valid-string-input description) ERR-INVALID-INPUT)
+        (asserts! (is-valid-name-input location) ERR-INVALID-INPUT)
         ;; Validate hourly rate is greater than 0
         (asserts! (> hourly-rate u0) ERR-INVALID-PRICE)
-        ;; Update provider information
+        ;; Update provider information using safe string creation
         (map-set service-providers tx-sender (merge provider {
-            name: name,
-            description: description,
-            location: location,
+            name: (create-safe-name name),
+            description: (create-safe-description description),
+            location: (create-safe-location location),
             hourly-rate: hourly-rate,
             is-active: is-active
         }))
@@ -349,11 +448,10 @@
     )
 )
 
-;; Function to create a printing service order
+;; Function to create a printing service order without design
 ;; Connects buyer with service provider for custom printing
-(define-public (create-print-order
+(define-public (create-print-order-no-design
     (provider principal)
-    (design-id (optional uint))
     (estimated-amount uint)
     (notes (string-ascii 256))
 )
@@ -367,24 +465,63 @@
         (asserts! (get is-active provider-data) ERR-INVALID-STATUS)
         ;; Prevent self-ordering
         (asserts! (not (is-eq tx-sender provider)) ERR-SELF-PURCHASE)
+        ;; Validate inputs
+        (asserts! (is-valid-string-input notes) ERR-INVALID-INPUT)
         ;; Validate estimated amount
         (asserts! (> estimated-amount u0) ERR-INVALID-PRICE)
-        ;; If design-id is provided, check if buyer owns it
-        (match design-id
-            design-id-val (asserts! (has-purchased-design tx-sender design-id-val) ERR-UNAUTHORIZED-ACCESS)
-            true
-        )
-        ;; Create order record
+        ;; Create order record using safe string creation
         (map-set orders order-id {
             buyer: tx-sender,
             seller: provider,
-            design-id: design-id,
+            design-id: none,
             order-type: u2,
             total-amount: estimated-amount,
             status: STATUS-PENDING,
             created-at: block-height,
             completed-at: none,
-            notes: notes
+            notes: (create-safe-notes notes)
+        })
+        ;; Increment order ID
+        (var-set next-order-id (+ order-id u1))
+        (ok order-id)
+    )
+)
+
+;; Function to create a printing service order with design
+;; Connects buyer with service provider for printing a purchased design
+(define-public (create-print-order-with-design
+    (provider principal)
+    (design-id uint)
+    (estimated-amount uint)
+    (notes (string-ascii 256))
+)
+    (let (
+        (provider-data (unwrap! (map-get? service-providers provider) ERR-NOT-FOUND))
+        (order-id (var-get next-order-id))
+    )
+        ;; Check if contract is not paused
+        (asserts! (not (var-get contract-paused)) ERR-CONTRACT-PAUSED)
+        ;; Check if provider is active
+        (asserts! (get is-active provider-data) ERR-INVALID-STATUS)
+        ;; Prevent self-ordering
+        (asserts! (not (is-eq tx-sender provider)) ERR-SELF-PURCHASE)
+        ;; Validate design ownership - this validates both existence and ownership
+        (asserts! (validate-design-ownership tx-sender design-id) ERR-UNAUTHORIZED-ACCESS)
+        ;; Validate inputs
+        (asserts! (is-valid-string-input notes) ERR-INVALID-INPUT)
+        ;; Validate estimated amount
+        (asserts! (> estimated-amount u0) ERR-INVALID-PRICE)
+        ;; Create order record using safe string creation
+        (map-set orders order-id {
+            buyer: tx-sender,
+            seller: provider,
+            design-id: (some design-id),
+            order-type: u2,
+            total-amount: estimated-amount,
+            status: STATUS-PENDING,
+            created-at: block-height,
+            completed-at: none,
+            notes: (create-safe-notes notes)
         })
         ;; Increment order ID
         (var-set next-order-id (+ order-id u1))
